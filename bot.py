@@ -1,14 +1,11 @@
 import random
 import sqlite3
-import json
-import time
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PreCheckoutQueryHandler, MessageHandler, filters, ContextTypes
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
  
 TOKEN = "8820171167:AAGiEb-WodNUyhPTMdbdUGnZ2AZcREIwdr8"
-ADMIN_ID = 901473279  # ТВОЙ ID
-SUPPORT_CHAT_ID = ADMIN_ID
+ADMIN_ID = 901473279
  
 # --- БАЗА ДАННЫХ ---
 def init_db():
@@ -20,8 +17,6 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, type TEXT, amount INTEGER, date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS withdraws
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, status TEXT, date TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS support
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, message TEXT, date TEXT, answered INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
  
@@ -56,7 +51,26 @@ def add_transaction(user_id, type, amount):
     conn.commit()
     conn.close()
  
-# --- КОМАНДЫ ---
+# --- ГЛАВНОЕ МЕНЮ ---
+def main_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("⚽ Футбол", callback_data="game_football"),
+         InlineKeyboardButton("🏀 Баскетбол", callback_data="game_basketball")],
+        [InlineKeyboardButton("🎳 Боулинг", callback_data="game_bowling"),
+         InlineKeyboardButton("🎯 Дартс", callback_data="game_darts")],
+        [InlineKeyboardButton("🎲 Классика (1-10)", callback_data="game_classic")],
+        [InlineKeyboardButton("💰 Баланс", callback_data="balance"),
+         InlineKeyboardButton("💳 Пополнить", callback_data="deposit")],
+        [InlineKeyboardButton("💸 Вывод", callback_data="withdraw"),
+         InlineKeyboardButton("🔗 Рефералка", callback_data="ref")],
+        [InlineKeyboardButton("🏆 Топ", callback_data="top"),
+         InlineKeyboardButton("📞 Поддержка", callback_data="support")],
+    ]
+    if ADMIN_ID:
+        keyboard.append([InlineKeyboardButton("👑 Админ-панель", callback_data="admin")])
+    return InlineKeyboardMarkup(keyboard)
+ 
+# --- /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
@@ -68,98 +82,226 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_transaction(ref, 'ref_bonus', 10)
         add_transaction(user_id, 'ref_bonus', 5)
         await update.message.reply_text(f"✅ Рефералка активирована! +5 звёзд тебе, +10 рефереру.")
+    await update.message.reply_text(
+        f"🌟 Привет! Твой баланс: {user['balance']} звёзд.\nВыбери игру или действие:",
+        reply_markup=main_keyboard()
+    )
  
-    text = f"🌟 Привет! Твой баланс: {user['balance']} звёзд.\n\n"
-    text += "🎲 /bet [сумма] [число 1-10] — ставка\n"
-    text += "💰 /balance — баланс\n"
-    text += "💳 /deposit — пополнить (Telegram Stars)\n"
-    text += "💸 /withdraw — вывести звёзды\n"
-    text += "🔗 /ref — реферальная ссылка\n"
-    text += "🏆 /top — топ игроков\n"
-    text += "📞 /support — написать в поддержку\n"
-    if user_id == ADMIN_ID:
-        text += "\n👑 /admin — админ-панель"
-    await update.message.reply_text(text)
+# --- ОБРАБОТЧИК КНОПОК ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
  
-async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    await update.message.reply_text(f"💰 Твой баланс: {user['balance']} звёзд.")
+    # --- БАЛАНС ---
+    if data == "balance":
+        user = get_user(user_id)
+        await query.edit_message_text(f"💰 Твой баланс: {user['balance']} звёзд.", reply_markup=main_keyboard())
  
-async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("❌ /bet [сумма] [число 1-10]")
-        return
-    try:
-        amount = int(args[0])
-        guess = int(args[1])
-        if amount <= 0 or guess < 1 or guess > 10:
-            await update.message.reply_text("❌ Сумма > 0, число от 1 до 10.")
+    # --- ПОПОЛНЕНИЕ ---
+    elif data == "deposit":
+        keyboard = [
+            [InlineKeyboardButton("⭐ 10", callback_data="deposit_10"), InlineKeyboardButton("⭐ 50", callback_data="deposit_50")],
+            [InlineKeyboardButton("⭐ 100", callback_data="deposit_100"), InlineKeyboardButton("⭐ 500", callback_data="deposit_500")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="back")],
+        ]
+        await query.edit_message_text("💳 Выбери сумму:", reply_markup=InlineKeyboardMarkup(keyboard))
+ 
+    elif data.startswith("deposit_"):
+        amount = int(data.split('_')[1])
+        update_balance(user_id, amount)
+        add_transaction(user_id, 'deposit', amount)
+        await query.edit_message_text(f"✅ Пополнено {amount} звёзд!", reply_markup=main_keyboard())
+ 
+    # --- ВЫВОД ---
+    elif data == "withdraw":
+        await query.edit_message_text("💸 Введи сумму: /withdraw [сумма]", reply_markup=main_keyboard())
+ 
+    # --- РЕФЕРАЛКА ---
+    elif data == "ref":
+        link = f"https://t.me/ZvezdniyFarmBot?start={user_id}"
+        await query.edit_message_text(f"🔗 Твоя ссылка:\n{link}\n\nЗа друга +10 тебе, +5 ему.", reply_markup=main_keyboard())
+ 
+    # --- ТОП ---
+    elif data == "top":
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
+        c.execute('SELECT id, balance FROM users ORDER BY balance DESC LIMIT 10')
+        rows = c.fetchall()
+        conn.close()
+        text = "🏆 Топ 10:\n"
+        for i, (uid, bal) in enumerate(rows, 1):
+            text += f"{i}. ID {uid} — {bal}⭐\n"
+        await query.edit_message_text(text, reply_markup=main_keyboard())
+ 
+    # --- ПОДДЕРЖКА ---
+    elif data == "support":
+        await query.edit_message_text("📞 /support [текст]", reply_markup=main_keyboard())
+ 
+    # --- АДМИНКА ---
+    elif data == "admin":
+        if user_id != ADMIN_ID:
+            await query.edit_message_text("⛔ Недоступно.", reply_markup=main_keyboard())
             return
-    except:
-        await update.message.reply_text("❌ Пример: /bet 5 7")
-        return
+        keyboard = [
+            [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton("💰 Выдать звёзды", callback_data="admin_give")],
+            [InlineKeyboardButton("📤 Заявки на вывод", callback_data="admin_withdraws")],
+            [InlineKeyboardButton("📜 История", callback_data="admin_history")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="back")],
+        ]
+        await query.edit_message_text("👑 Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
  
-    user = get_user(user_id)
-    if user['balance'] < amount:
-        await update.message.reply_text("❌ Недостаточно звёзд.")
-        return
+    elif data.startswith("admin_"):
+        if user_id != ADMIN_ID:
+            await query.edit_message_text("⛔ Недоступно.", reply_markup=main_keyboard())
+            return
+        if data == "admin_stats":
+            conn = sqlite3.connect('users.db')
+            c = conn.cursor()
+            c.execute('SELECT COUNT(*) FROM users')
+            users = c.fetchone()[0]
+            c.execute('SELECT SUM(balance) FROM users')
+            total = c.fetchone()[0] or 0
+            conn.close()
+            await query.edit_message_text(f"📊 Всего: {users}\nОбщий баланс: {total}⭐", reply_markup=main_keyboard())
+        elif data == "admin_give":
+            await query.edit_message_text("💡 /give [ID] [сумма]", reply_markup=main_keyboard())
+        elif data == "admin_withdraws":
+            conn = sqlite3.connect('users.db')
+            c = conn.cursor()
+            c.execute('SELECT id, user_id, amount FROM withdraws WHERE status = "pending"')
+            rows = c.fetchall()
+            conn.close()
+            if not rows:
+                await query.edit_message_text("✅ Заявок нет.", reply_markup=main_keyboard())
+                return
+            text = "📤 Заявки:\n"
+            for w_id, uid, amt in rows:
+                text += f"ID {w_id} | {uid} | {amt}⭐\n"
+            text += "\n/approve [ID] или /reject [ID]"
+            await query.edit_message_text(text, reply_markup=main_keyboard())
+        elif data == "admin_history":
+            conn = sqlite3.connect('users.db')
+            c = conn.cursor()
+            c.execute('SELECT user_id, type, amount, date FROM transactions ORDER BY id DESC LIMIT 10')
+            rows = c.fetchall()
+            conn.close()
+            text = "📜 Последние 10:\n"
+            for uid, typ, amt, date in rows:
+                text += f"{date} | {uid} | {typ} | {amt}⭐\n"
+            await query.edit_message_text(text, reply_markup=main_keyboard())
  
-    result = random.randint(1, 10)
-    if guess == result:
-        win = amount * 2
-        update_balance(user_id, win)
-        add_transaction(user_id, 'bet_win', win)
-        await update.message.reply_text(f"🎉 Угадал! Было {result}. +{win} звёзд!")
-    else:
-        update_balance(user_id, -amount)
-        add_transaction(user_id, 'bet_lose', -amount)
-        await update.message.reply_text(f"😢 Не угадал. Было {result}. -{amount} звёзд.")
+    # --- НАЗАД ---
+    elif data == "back":
+        await query.edit_message_text("🌟 Главное меню:", reply_markup=main_keyboard())
  
-# --- ДЕПОЗИТ (заглушка, позже сделаем реальные Stars) ---
-async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💳 Пополнение через Telegram Stars пока в разработке. Используй /addstars [сумма] (только админ) для теста.")
+    # === ИГРЫ ===
+    elif data.startswith("game_"):
+        game = data.split('_')[1]
+        context.user_data['game'] = game
+        keyboard = [
+            [InlineKeyboardButton("5⭐", callback_data=f"game_bet_5"),
+             InlineKeyboardButton("10⭐", callback_data=f"game_bet_10")],
+            [InlineKeyboardButton("25⭐", callback_data=f"game_bet_25"),
+             InlineKeyboardButton("50⭐", callback_data=f"game_bet_50")],
+            [InlineKeyboardButton("100⭐", callback_data=f"game_bet_100")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="back")],
+        ]
+        emojis = {"football": "⚽", "basketball": "🏀", "bowling": "🎳", "darts": "🎯", "classic": "🎲"}
+        await query.edit_message_text(f"{emojis.get(game, '🎮')} Выбери сумму ставки:", reply_markup=InlineKeyboardMarkup(keyboard))
  
-# --- ВРЕМЕННАЯ КОМАНДА ДЛЯ ТЕСТА (выдаёт звёзды админу) ---
-async def addstars(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Недоступно.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ /addstars [сумма]")
-        return
-    try:
-        amount = int(args[0])
-    except:
-        await update.message.reply_text("❌ Пример: /addstars 100")
-        return
-    update_balance(ADMIN_ID, amount)
-    add_transaction(ADMIN_ID, 'admin_test', amount)
-    await update.message.reply_text(f"✅ Добавлено {amount} звёзд админу. Новый баланс: {get_user(ADMIN_ID)['balance']}")
+    elif data.startswith("game_bet_"):
+        amount = int(data.split('_')[2])
+        game = context.user_data.get('game', 'classic')
+        user = get_user(user_id)
+        if user['balance'] < amount:
+            await query.edit_message_text("❌ Недостаточно звёзд.", reply_markup=main_keyboard())
+            return
  
+        # --- ЛОГИКА ИГР ---
+        if game == "football":
+            result = random.choice(["гол", "мимо"])
+            guess = random.choice(["гол", "мимо"])  # Игрок не выбирает, просто удача
+            if result == "гол":
+                win = amount * 2
+                update_balance(user_id, win)
+                add_transaction(user_id, 'game_football_win', win)
+                await query.edit_message_text(f"⚽ ГОЛ! Ты выиграл {win}⭐!", reply_markup=main_keyboard())
+            else:
+                update_balance(user_id, -amount)
+                add_transaction(user_id, 'game_football_lose', -amount)
+                await query.edit_message_text(f"⚽ Мимо! -{amount}⭐", reply_markup=main_keyboard())
+ 
+        elif game == "basketball":
+            result = random.choice(["попадание", "промах"])
+            if result == "попадание":
+                win = amount * 2
+                update_balance(user_id, win)
+                add_transaction(user_id, 'game_basketball_win', win)
+                await query.edit_message_text(f"🏀 ПОПАДАНИЕ! +{win}⭐", reply_markup=main_keyboard())
+            else:
+                update_balance(user_id, -amount)
+                add_transaction(user_id, 'game_basketball_lose', -amount)
+                await query.edit_message_text(f"🏀 Промах! -{amount}⭐", reply_markup=main_keyboard())
+ 
+        elif game == "bowling":
+            pins = random.randint(1, 10)
+            win = amount * 2 if pins >= 8 else 0
+            if win:
+                update_balance(user_id, win)
+                add_transaction(user_id, 'game_bowling_win', win)
+                await query.edit_message_text(f"🎳 Сбито {pins} кеглей! +{win}⭐", reply_markup=main_keyboard())
+            else:
+                update_balance(user_id, -amount)
+                add_transaction(user_id, 'game_bowling_lose', -amount)
+                await query.edit_message_text(f"🎳 Только {pins} кеглей! -{amount}⭐", reply_markup=main_keyboard())
+ 
+        elif game == "darts":
+            sector = random.randint(1, 20)
+            if sector >= 15:
+                win = amount * 2
+                update_balance(user_id, win)
+                add_transaction(user_id, 'game_darts_win', win)
+                await query.edit_message_text(f"🎯 Сектор {sector}! +{win}⭐", reply_markup=main_keyboard())
+            else:
+                update_balance(user_id, -amount)
+                add_transaction(user_id, 'game_darts_lose', -amount)
+                await query.edit_message_text(f"🎯 Сектор {sector}! -{amount}⭐", reply_markup=main_keyboard())
+ 
+        elif game == "classic":
+            guess = random.randint(1, 10)
+            result = random.randint(1, 10)
+            if guess == result:
+                win = amount * 2
+                update_balance(user_id, win)
+                add_transaction(user_id, 'game_classic_win', win)
+                await query.edit_message_text(f"🎲 Угадал! Было {result}. +{win}⭐", reply_markup=main_keyboard())
+            else:
+                update_balance(user_id, -amount)
+                add_transaction(user_id, 'game_classic_lose', -amount)
+                await query.edit_message_text(f"🎲 Не угадал. Было {result}. -{amount}⭐", reply_markup=main_keyboard())
+ 
+# --- ТЕКСТОВЫЕ КОМАНДЫ ---
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
     if not args:
-        await update.message.reply_text("❌ /withdraw [сумма]")
+        await update.message.reply_text("❌ /withdraw [сумма]", reply_markup=main_keyboard())
         return
     try:
         amount = int(args[0])
         if amount <= 0:
-            await update.message.reply_text("❌ Сумма > 0")
+            await update.message.reply_text("❌ >0", reply_markup=main_keyboard())
             return
     except:
-        await update.message.reply_text("❌ Пример: /withdraw 10")
+        await update.message.reply_text("❌ Пример: /withdraw 10", reply_markup=main_keyboard())
         return
- 
     user = get_user(user_id)
     if user['balance'] < amount:
-        await update.message.reply_text("❌ Недостаточно звёзд.")
+        await update.message.reply_text("❌ Недостаточно.", reply_markup=main_keyboard())
         return
- 
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
     c.execute('INSERT INTO withdraws (user_id, amount, status, date) VALUES (?, ?, ?, ?)',
@@ -168,30 +310,13 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     update_balance(user_id, -amount)
     add_transaction(user_id, 'withdraw_pending', -amount)
-    await update.message.reply_text(f"✅ Заявка на вывод {amount} звёзд отправлена! Ожидай обработки.")
+    await update.message.reply_text(f"✅ Заявка на {amount}⭐ отправлена!", reply_markup=main_keyboard())
  
-async def ref(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    link = f"https://t.me/ZvezdniyFarmBot?start={user_id}"
-    await update.message.reply_text(f"🔗 Твоя реферальная ссылка:\n{link}\n\nЗа каждого друга +10 звёзд тебе, +5 ему.")
- 
-async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('SELECT id, balance FROM users ORDER BY balance DESC LIMIT 10')
-    rows = c.fetchall()
-    conn.close()
-    text = "🏆 Топ 10 игроков:\n"
-    for i, (uid, bal) in enumerate(rows, 1):
-        text += f"{i}. ID {uid} — {bal} звёзд\n"
-    await update.message.reply_text(text)
- 
-# --- ПОДДЕРЖКА ---
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
     if not args:
-        await update.message.reply_text("📞 Напиши сообщение для поддержки: /support [текст]")
+        await update.message.reply_text("📞 /support [текст]", reply_markup=main_keyboard())
         return
     message = ' '.join(args)
     conn = sqlite3.connect('users.db')
@@ -200,111 +325,8 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
               (user_id, message, datetime.now().strftime("%Y-%m-%d %H:%M")))
     conn.commit()
     conn.close()
-    await update.message.reply_text("✅ Твоё сообщение отправлено в поддержку! Мы ответим как можно скорее.")
-    keyboard = [[InlineKeyboardButton("Ответить", callback_data=f"answer_{user_id}")]]
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"📩 Новое сообщение в поддержку!\nОт: {user_id}\nТекст: {message}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
- 
-async def support_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = int(query.data.split('_')[1])
-    context.user_data['support_user'] = user_id
-    await query.edit_message_text(f"✏️ Напиши ответ для пользователя {user_id} (команда /reply [текст])")
- 
-async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Недоступно.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ /reply [текст]")
-        return
-    if 'support_user' not in context.user_data:
-        await update.message.reply_text("❌ Сначала выбери пользователя через кнопку 'Ответить' в сообщении поддержки.")
-        return
-    user_id = context.user_data['support_user']
-    message = ' '.join(args)
-    await context.bot.send_message(chat_id=user_id, text=f"📞 Ответ поддержки: {message}")
-    await update.message.reply_text(f"✅ Ответ отправлен пользователю {user_id}.")
- 
-# --- АДМИНКА ---
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Недоступно.")
-        return
-    keyboard = [
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("💰 Выдать звёзды", callback_data="admin_give")],
-        [InlineKeyboardButton("📤 Заявки на вывод", callback_data="admin_withdraws")],
-        [InlineKeyboardButton("📜 История транзакций", callback_data="admin_history")],
-        [InlineKeyboardButton("📩 Сообщения в поддержку", callback_data="admin_support")],
-    ]
-    await update.message.reply_text("👑 Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
- 
-async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    if user_id != ADMIN_ID:
-        await query.edit_message_text("⛔ Недоступно.")
-        return
- 
-    if query.data == "admin_stats":
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-        c.execute('SELECT COUNT(*) FROM users')
-        users = c.fetchone()[0]
-        c.execute('SELECT SUM(balance) FROM users')
-        total = c.fetchone()[0] or 0
-        conn.close()
-        await query.edit_message_text(f"📊 Статистика:\nВсего игроков: {users}\nОбщий баланс: {total} звёзд")
- 
-    elif query.data == "admin_give":
-        await query.edit_message_text("💡 Используй /give [ID] [сумма]")
- 
-    elif query.data == "admin_withdraws":
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-        c.execute('SELECT id, user_id, amount FROM withdraws WHERE status = "pending"')
-        rows = c.fetchall()
-        conn.close()
-        if not rows:
-            await query.edit_message_text("✅ Заявок нет.")
-            return
-        text = "📤 Заявки на вывод:\n"
-        for w_id, uid, amt in rows:
-            text += f"ID {w_id} | Пользователь {uid} | {amt} звёзд\n"
-        text += "\nИспользуй /approve [ID заявки] или /reject [ID заявки]"
-        await query.edit_message_text(text)
- 
-    elif query.data == "admin_history":
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-        c.execute('SELECT user_id, type, amount, date FROM transactions ORDER BY id DESC LIMIT 10')
-        rows = c.fetchall()
-        conn.close()
-        text = "📜 Последние 10 транзакций:\n"
-        for uid, typ, amt, date in rows:
-            text += f"{date} | {uid} | {typ} | {amt}\n"
-        await query.edit_message_text(text)
- 
-    elif query.data == "admin_support":
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-        c.execute('SELECT id, user_id, message, date FROM support WHERE answered = 0 ORDER BY id DESC')
-        rows = c.fetchall()
-        conn.close()
-        if not rows:
-            await query.edit_message_text("✅ Новых обращений нет.")
-            return
-        text = "📩 Новые сообщения в поддержку:\n"
-        for s_id, uid, msg, date in rows:
-            text += f"ID {s_id} | От {uid} | {date}\n{msg}\n\n"
-        await query.edit_message_text(text)
+    await update.message.reply_text("✅ Отправлено!", reply_markup=main_keyboard())
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"📩 От {user_id}: {message}")
  
 async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -322,7 +344,7 @@ async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     update_balance(target, amount)
     add_transaction(target, 'admin_give', amount)
-    await update.message.reply_text(f"✅ Пользователю {target} выдано {amount} звёзд.")
+    await update.message.reply_text(f"✅ {target} +{amount}⭐")
  
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -330,7 +352,7 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("❌ /approve [ID заявки]")
+        await update.message.reply_text("❌ /approve [ID]")
         return
     w_id = int(args[0])
     conn = sqlite3.connect('users.db')
@@ -346,7 +368,7 @@ async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("❌ /reject [ID заявки]")
+        await update.message.reply_text("❌ /reject [ID]")
         return
     w_id = int(args[0])
     conn = sqlite3.connect('users.db')
@@ -361,21 +383,12 @@ def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("balance", balance))
-    app.add_handler(CommandHandler("bet", bet))
-    app.add_handler(CommandHandler("deposit", deposit))
-    app.add_handler(CommandHandler("addstars", addstars))
     app.add_handler(CommandHandler("withdraw", withdraw))
-    app.add_handler(CommandHandler("ref", ref))
-    app.add_handler(CommandHandler("top", top))
     app.add_handler(CommandHandler("support", support))
-    app.add_handler(CommandHandler("reply", reply))
-    app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("give", give))
     app.add_handler(CommandHandler("approve", approve))
     app.add_handler(CommandHandler("reject", reject))
-    app.add_handler(CallbackQueryHandler(admin_callback, pattern="admin_"))
-    app.add_handler(CallbackQueryHandler(support_answer, pattern="answer_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
     print("Бот запущен...")
     app.run_polling()
  

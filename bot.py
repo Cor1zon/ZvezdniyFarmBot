@@ -18,6 +18,8 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, type TEXT, amount INTEGER, date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS withdraws
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, status TEXT, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS support
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, message TEXT, date TEXT, answered INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
  
@@ -52,14 +54,14 @@ def add_transaction(user_id, type, amount):
     conn.commit()
     conn.close()
  
-# --- КРАСИВОЕ ГЛАВНОЕ МЕНЮ (как у Булкина) ---
+# --- ГЛАВНОЕ МЕНЮ ---
 def main_keyboard():
     keyboard = [
         [InlineKeyboardButton("⚽ Футбол", callback_data="game_football"),
-         InlineKeyboardButton("🏀 Баскет", callback_data="game_basketball")],
+         InlineKeyboardButton("🏀 Баскетбол", callback_data="game_basketball")],
         [InlineKeyboardButton("🎳 Боулинг", callback_data="game_bowling"),
          InlineKeyboardButton("🎯 Дартс", callback_data="game_darts")],
-        [InlineKeyboardButton("🎲 Классика", callback_data="game_classic")],
+        [InlineKeyboardButton("🎲 Классика (1-10)", callback_data="game_classic")],
         [InlineKeyboardButton("💰 Баланс", callback_data="balance"),
          InlineKeyboardButton("💳 Пополнить", callback_data="deposit")],
         [InlineKeyboardButton("💸 Вывод", callback_data="withdraw"),
@@ -68,7 +70,7 @@ def main_keyboard():
          InlineKeyboardButton("📞 Поддержка", callback_data="support")],
     ]
     if ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("👑 Админ", callback_data="admin")])
+        keyboard.append([InlineKeyboardButton("👑 Админ-панель", callback_data="admin")])
     return InlineKeyboardMarkup(keyboard)
  
 # --- /start ---
@@ -82,38 +84,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_balance(user_id, 5)
         add_transaction(ref, 'ref_bonus', 10)
         add_transaction(user_id, 'ref_bonus', 5)
-        await update.message.reply_text(f"✅ Рефералка +5⭐ тебе, +10⭐ рефереру!")
- 
-    # Приветствие с балансом
+        await update.message.reply_text(f"✅ Рефералка активирована! +5⭐ тебе, +10⭐ рефереру.")
     await update.message.reply_text(
-        f"🌟 **Звездный Фарм**\n"
-        f"💰 Баланс: {user['balance']}⭐\n\n"
-        f"🎮 Выбери игру или действие:",
+        f"🌟 **Звездный Фарм**\n💰 Баланс: {user['balance']}⭐\n\n🎮 Выбери игру:",
         reply_markup=main_keyboard(),
         parse_mode="Markdown"
     )
  
-# --- АНИМАЦИИ ДЛЯ ИГР (как у Булкина) ---
- 
+# --- АНИМАЦИИ ---
 async def football_animation(update, context, user_id, amount, guess):
-    """Анимация футбола с поэтапными сообщениями"""
     msg = await update.effective_message.edit_text("⚽️ **Удар!**")
-    await asyncio.sleep(0.5)
- 
+    await asyncio.sleep(0.6)
     await msg.edit_text("⚽️💨 Мяч летит...")
-    await asyncio.sleep(0.5)
- 
-    # Результат
+    await asyncio.sleep(0.6)
     result = random.choice(["гол", "мимо"])
     if result == "гол":
-        await msg.edit_text("⚽️🔥 **ГООООЛ!** Мяч в сетке! 🥅")
+        await msg.edit_text("⚽️🔥 **ГООООЛ!** 🥅")
         await asyncio.sleep(0.5)
         win = amount * 2
         update_balance(user_id, win)
         add_transaction(user_id, 'football_win', win)
         await msg.edit_text(f"⚽️🔥 **ГООООЛ!** +{win}⭐")
     else:
-        await msg.edit_text("⚽️😱 **Мимо!** Мяч улетел за ворота!")
+        await msg.edit_text("⚽️😱 **Мимо!**")
         await asyncio.sleep(0.5)
         update_balance(user_id, -amount)
         add_transaction(user_id, 'football_lose', -amount)
@@ -121,21 +114,19 @@ async def football_animation(update, context, user_id, amount, guess):
  
 async def basketball_animation(update, context, user_id, amount):
     msg = await update.effective_message.edit_text("🏀 **Бросок!**")
-    await asyncio.sleep(0.5)
- 
+    await asyncio.sleep(0.6)
+    await msg.edit_text("🏀💨 Мяч летит...")
+    await asyncio.sleep(0.6)
     result = random.choice(["попадание", "промах"])
-    await msg.edit_text("🏀💨 Мяч летит к кольцу...")
-    await asyncio.sleep(0.5)
- 
     if result == "попадание":
-        await msg.edit_text("🏀🔥 **ПОПАДАНИЕ!** Свист! 🥅")
+        await msg.edit_text("🏀🔥 **ПОПАДАНИЕ!** 🥅")
         await asyncio.sleep(0.5)
         win = amount * 2
         update_balance(user_id, win)
         add_transaction(user_id, 'basketball_win', win)
         await msg.edit_text(f"🏀🔥 +{win}⭐")
     else:
-        await msg.edit_text("🏀😱 **Промах!** Мяч мимо!")
+        await msg.edit_text("🏀😱 **Промах!**")
         await asyncio.sleep(0.5)
         update_balance(user_id, -amount)
         add_transaction(user_id, 'basketball_lose', -amount)
@@ -143,14 +134,12 @@ async def basketball_animation(update, context, user_id, amount):
  
 async def bowling_animation(update, context, user_id, amount):
     msg = await update.effective_message.edit_text("🎳 **Бросок!**")
-    await asyncio.sleep(0.5)
- 
+    await asyncio.sleep(0.6)
+    await msg.edit_text("🎳 Шар катится...")
+    await asyncio.sleep(0.6)
     pins = random.randint(1, 10)
-    await msg.edit_text(f"🎳 Шар катится...")
-    await asyncio.sleep(0.5)
- 
     if pins >= 8:
-        await msg.edit_text(f"🎳🔥 **Страйк!** Сбито {pins} кеглей!")
+        await msg.edit_text(f"🎳🔥 **СТРАЙК!** Сбито {pins} кеглей!")
         await asyncio.sleep(0.5)
         win = amount * 2
         update_balance(user_id, win)
@@ -165,21 +154,19 @@ async def bowling_animation(update, context, user_id, amount):
  
 async def darts_animation(update, context, user_id, amount):
     msg = await update.effective_message.edit_text("🎯 **Бросок дротика!**")
-    await asyncio.sleep(0.5)
- 
+    await asyncio.sleep(0.6)
+    await msg.edit_text("🎯 Дротик летит...")
+    await asyncio.sleep(0.6)
     sector = random.randint(1, 20)
-    await msg.edit_text(f"🎯 Дротик летит...")
-    await asyncio.sleep(0.5)
- 
     if sector >= 15:
-        await msg.edit_text(f"🎯🔥 **Сектор {sector}!** Точное попадание!")
+        await msg.edit_text(f"🎯🔥 **Сектор {sector}!**")
         await asyncio.sleep(0.5)
         win = amount * 2
         update_balance(user_id, win)
         add_transaction(user_id, 'darts_win', win)
         await msg.edit_text(f"🎯🔥 +{win}⭐")
     else:
-        await msg.edit_text(f"🎯😱 Сектор {sector}! Мимо десятки!")
+        await msg.edit_text(f"🎯😱 Сектор {sector}!")
         await asyncio.sleep(0.5)
         update_balance(user_id, -amount)
         add_transaction(user_id, 'darts_lose', -amount)
@@ -187,13 +174,11 @@ async def darts_animation(update, context, user_id, amount):
  
 async def classic_animation(update, context, user_id, amount):
     msg = await update.effective_message.edit_text("🎲 **Бросок кубика...**")
-    await asyncio.sleep(0.5)
- 
+    await asyncio.sleep(0.6)
+    await msg.edit_text("🎲 Кубик остановился...")
+    await asyncio.sleep(0.6)
     result = random.randint(1, 10)
     guess = random.randint(1, 10)
-    await msg.edit_text(f"🎲 Кубик остановился...")
-    await asyncio.sleep(0.5)
- 
     if guess == result:
         await msg.edit_text(f"🎲🔥 **Угадал!** Было {result}")
         await asyncio.sleep(0.5)
@@ -215,7 +200,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
  
-    # --- ОСТАЛЬНЫЕ КНОПКИ (баланс, пополнение, вывод, рефералка, топ, поддержка, админка) ---
     if data == "balance":
         user = get_user(user_id)
         await query.edit_message_text(f"💰 Баланс: {user['balance']}⭐", reply_markup=main_keyboard())
@@ -227,7 +211,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⭐ 100", callback_data="deposit_100"), InlineKeyboardButton("⭐ 500", callback_data="deposit_500")],
             [InlineKeyboardButton("🔙 Назад", callback_data="back")],
         ]
-        await query.edit_message_text("💳 Выбери сумму пополнения:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("💳 Выбери сумму:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
  
     elif data.startswith("deposit_"):
@@ -238,12 +222,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
  
     elif data == "withdraw":
-        await query.edit_message_text("💸 Используй /withdraw [сумма]", reply_markup=main_keyboard())
+        await query.edit_message_text("💸 /withdraw [сумма]", reply_markup=main_keyboard())
         return
  
     elif data == "ref":
         link = f"https://t.me/ZvezdniyFarmBot?start={user_id}"
-        await query.edit_message_text(f"🔗 Твоя реферальная ссылка:\n{link}\n\n+10⭐ тебе, +5⭐ другу", reply_markup=main_keyboard())
+        await query.edit_message_text(f"🔗 Твоя ссылка:\n{link}\n\n+10⭐ тебе, +5⭐ другу", reply_markup=main_keyboard())
         return
  
     elif data == "top":
@@ -252,14 +236,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute('SELECT id, balance FROM users ORDER BY balance DESC LIMIT 10')
         rows = c.fetchall()
         conn.close()
-        text = "🏆 **Топ 10 игроков:**\n"
+        text = "🏆 **Топ 10:**\n"
         for i, (uid, bal) in enumerate(rows, 1):
             text += f"{i}. ID {uid} — {bal}⭐\n"
         await query.edit_message_text(text, reply_markup=main_keyboard(), parse_mode="Markdown")
         return
  
     elif data == "support":
-        await query.edit_message_text("📞 Напиши /support [текст]", reply_markup=main_keyboard())
+        await query.edit_message_text("📞 /support [текст]", reply_markup=main_keyboard())
         return
  
     elif data == "admin":
@@ -271,6 +255,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💰 Выдать звёзды", callback_data="admin_give")],
             [InlineKeyboardButton("📤 Заявки на вывод", callback_data="admin_withdraws")],
             [InlineKeyboardButton("📜 История", callback_data="admin_history")],
+            [InlineKeyboardButton("📩 Сообщения в поддержку", callback_data="admin_support")],
             [InlineKeyboardButton("🔙 Назад", callback_data="back")],
         ]
         await query.edit_message_text("👑 Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -288,7 +273,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute('SELECT SUM(balance) FROM users')
             total = c.fetchone()[0] or 0
             conn.close()
-            await query.edit_message_text(f"📊 Всего игроков: {users}\nОбщий баланс: {total}⭐", reply_markup=main_keyboard())
+            await query.edit_message_text(f"📊 Всего: {users}\nОбщий баланс: {total}⭐", reply_markup=main_keyboard())
         elif data == "admin_give":
             await query.edit_message_text("💡 /give [ID] [сумма]", reply_markup=main_keyboard())
         elif data == "admin_withdraws":
@@ -315,51 +300,58 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for uid, typ, amt, date in rows:
                 text += f"{date} | {uid} | {typ} | {amt}⭐\n"
             await query.edit_message_text(text, reply_markup=main_keyboard())
+        elif data == "admin_support":
+            conn = sqlite3.connect('users.db')
+            c = conn.cursor()
+            c.execute('SELECT id, user_id, message, date FROM support WHERE answered = 0 ORDER BY id DESC')
+            rows = c.fetchall()
+            conn.close()
+            if not rows:
+                await query.edit_message_text("✅ Новых обращений нет.", reply_markup=main_keyboard())
+                return
+            text = "📩 Новые сообщения:\n"
+            for s_id, uid, msg, date in rows:
+                text += f"ID {s_id} | От {uid} | {date}\n{msg}\n\n"
+            await query.edit_message_text(text, reply_markup=main_keyboard())
         return
  
     elif data == "back":
         await query.edit_message_text("🌟 Главное меню:", reply_markup=main_keyboard())
         return
  
-    # --- ВЫБОР ИГРЫ ---
     elif data.startswith("game_"):
         game = data.split('_')[1]
         context.user_data['game'] = game
-        emojis = {"football": "⚽", "basketball": "🏀", "bowling": "🎳", "darts": "🎯", "classic": "🎲"}
         keyboard = [
             [InlineKeyboardButton("5⭐", callback_data="bet_5"), InlineKeyboardButton("10⭐", callback_data="bet_10")],
             [InlineKeyboardButton("25⭐", callback_data="bet_25"), InlineKeyboardButton("50⭐", callback_data="bet_50")],
             [InlineKeyboardButton("100⭐", callback_data="bet_100")],
             [InlineKeyboardButton("🔙 Назад", callback_data="back")],
         ]
+        emojis = {"football": "⚽", "basketball": "🏀", "bowling": "🎳", "darts": "🎯", "classic": "🎲"}
         await query.edit_message_text(
-            f"{emojis.get(game, '🎮')} Выбери сумму ставки:",
+            f"{emojis.get(game, '🎮')} Выбери сумму:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
  
-    # --- ОБРАБОТКА СТАВКИ ---
     elif data.startswith("bet_"):
         amount = int(data.split('_')[1])
         game = context.user_data.get('game')
         if not game:
             await query.edit_message_text("❌ Сначала выбери игру.", reply_markup=main_keyboard())
             return
- 
         user = get_user(user_id)
         if user['balance'] < amount:
             await query.edit_message_text("❌ Недостаточно звёзд.", reply_markup=main_keyboard())
             return
- 
-        # --- ЗАПУСК АНИМАЦИИ В ЗАВИСИМОСТИ ОТ ИГРЫ ---
         if game == "football":
-            # Для футбола нужен выбор "Забьёт" / "Не забьёт"
             keyboard = [
                 [InlineKeyboardButton("⚽ Забьёт", callback_data=f"football_goal_{amount}")],
                 [InlineKeyboardButton("❌ Не забьёт", callback_data=f"football_miss_{amount}")],
             ]
             await query.edit_message_text(
-                f"⚽ Ставка: {amount}⭐\nКто, по-твоему, забьёт?",
+                f"⚽ Ставка: {amount}⭐\nКто забьёт?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         elif game == "basketball":
@@ -372,15 +364,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await classic_animation(update, context, user_id, amount)
         return
  
-    # --- ФУТБОЛ: ВЫБОР "ЗАБЬЁТ" ИЛИ "НЕ ЗАБЬЁТ" ---
     elif data.startswith("football_"):
         parts = data.split('_')
-        guess = parts[1]  # goal или miss
+        guess = parts[1]
         amount = int(parts[2])
         await football_animation(update, context, user_id, amount, guess)
         return
  
-# --- ТЕКСТОВЫЕ КОМАНДЫ (админские и служебные) ---
+# --- ТЕКСТОВЫЕ КОМАНДЫ ---
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
@@ -390,7 +381,7 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = int(args[0])
         if amount <= 0:
-            await update.message.reply_text("❌ Сумма > 0", reply_markup=main_keyboard())
+            await update.message.reply_text("❌ >0", reply_markup=main_keyboard())
             return
     except:
         await update.message.reply_text("❌ Пример: /withdraw 10", reply_markup=main_keyboard())
@@ -423,8 +414,6 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
     await update.message.reply_text("✅ Отправлено!", reply_markup=main_keyboard())
- 
-    # --- УВЕДОМЛЕНИЕ АДМИНУ ---
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=f"📩 **Новое сообщение в поддержку**\nОт: {user_id}\nТекст: {message}",

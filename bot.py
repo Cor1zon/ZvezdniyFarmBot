@@ -2,12 +2,13 @@ import random
 import sqlite3
 import json
 import time
-from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PreCheckoutQueryHandler, MessageHandler, filters, ContextTypes
  
 TOKEN = "8820171167:AAGiEb-WodNUyhPTMdbdUGnZ2AZcREIwdr8"
-ADMIN_ID = 901473279  # ЗАМЕНИ НА СВОЙ ТЕЛЕГРАМ ID (узнай через @userinfobot)
+ADMIN_ID = 901473279  # ТВОЙ ID
+SUPPORT_CHAT_ID = ADMIN_ID
  
 # --- БАЗА ДАННЫХ ---
 def init_db():
@@ -19,6 +20,8 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, type TEXT, amount INTEGER, date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS withdraws
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, status TEXT, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS support
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, message TEXT, date TEXT, answered INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
  
@@ -57,7 +60,6 @@ def add_transaction(user_id, type, amount):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
-    # Рефералка
     if context.args and context.args[0].isdigit() and int(context.args[0]) != user_id:
         ref = int(context.args[0])
         get_user(ref)
@@ -65,15 +67,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_balance(user_id, 5)
         add_transaction(ref, 'ref_bonus', 10)
         add_transaction(user_id, 'ref_bonus', 5)
-        await update.message.reply_text(f"✅ Ты активировал рефералку! +5 звёзд тебе, +10 рефереру.")
+        await update.message.reply_text(f"✅ Рефералка активирована! +5 звёзд тебе, +10 рефереру.")
  
     text = f"🌟 Привет! Твой баланс: {user['balance']} звёзд.\n\n"
-    text += "🎲 /bet [сумма] [число 1-10] — сделай ставку\n"
+    text += "🎲 /bet [сумма] [число 1-10] — ставка\n"
     text += "💰 /balance — баланс\n"
-    text += "💳 /deposit — пополнить баланс\n"
+    text += "💳 /deposit — пополнить (Telegram Stars)\n"
     text += "💸 /withdraw — вывести звёзды\n"
     text += "🔗 /ref — реферальная ссылка\n"
     text += "🏆 /top — топ игроков\n"
+    text += "📞 /support — написать в поддержку\n"
     if user_id == ADMIN_ID:
         text += "\n👑 /admin — админ-панель"
     await update.message.reply_text(text)
@@ -115,25 +118,27 @@ async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_transaction(user_id, 'bet_lose', -amount)
         await update.message.reply_text(f"😢 Не угадал. Было {result}. -{amount} звёзд.")
  
+# --- ДЕПОЗИТ (заглушка, позже сделаем реальные Stars) ---
 async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("⭐ 10 звёзд — 1⭐", callback_data="deposit_10")],
-        [InlineKeyboardButton("⭐ 50 звёзд — 5⭐", callback_data="deposit_50")],
-        [InlineKeyboardButton("⭐ 100 звёзд — 10⭐", callback_data="deposit_100")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("💳 Выбери сумму пополнения (звёзды Telegram):", reply_markup=reply_markup)
+    await update.message.reply_text("💳 Пополнение через Telegram Stars пока в разработке. Используй /addstars [сумма] (только админ) для теста.")
  
-async def deposit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    amount = int(query.data.split('_')[1])
-    # Здесь должен быть реальный платёж через Telegram Stars API
-    # Пока просто зачисляем вручную (для теста)
-    update_balance(user_id, amount)
-    add_transaction(user_id, 'deposit', amount)
-    await query.edit_message_text(f"✅ Пополнено {amount} звёзд! Новый баланс: {get_user(user_id)['balance']}")
+# --- ВРЕМЕННАЯ КОМАНДА ДЛЯ ТЕСТА (выдаёт звёзды админу) ---
+async def addstars(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Недоступно.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ /addstars [сумма]")
+        return
+    try:
+        amount = int(args[0])
+    except:
+        await update.message.reply_text("❌ Пример: /addstars 100")
+        return
+    update_balance(ADMIN_ID, amount)
+    add_transaction(ADMIN_ID, 'admin_test', amount)
+    await update.message.reply_text(f"✅ Добавлено {amount} звёзд админу. Новый баланс: {get_user(ADMIN_ID)['balance']}")
  
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -181,6 +186,51 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. ID {uid} — {bal} звёзд\n"
     await update.message.reply_text(text)
  
+# --- ПОДДЕРЖКА ---
+async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+    if not args:
+        await update.message.reply_text("📞 Напиши сообщение для поддержки: /support [текст]")
+        return
+    message = ' '.join(args)
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('INSERT INTO support (user_id, message, date) VALUES (?, ?, ?)',
+              (user_id, message, datetime.now().strftime("%Y-%m-%d %H:%M")))
+    conn.commit()
+    conn.close()
+    await update.message.reply_text("✅ Твоё сообщение отправлено в поддержку! Мы ответим как можно скорее.")
+    keyboard = [[InlineKeyboardButton("Ответить", callback_data=f"answer_{user_id}")]]
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"📩 Новое сообщение в поддержку!\nОт: {user_id}\nТекст: {message}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+ 
+async def support_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = int(query.data.split('_')[1])
+    context.user_data['support_user'] = user_id
+    await query.edit_message_text(f"✏️ Напиши ответ для пользователя {user_id} (команда /reply [текст])")
+ 
+async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Недоступно.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ /reply [текст]")
+        return
+    if 'support_user' not in context.user_data:
+        await update.message.reply_text("❌ Сначала выбери пользователя через кнопку 'Ответить' в сообщении поддержки.")
+        return
+    user_id = context.user_data['support_user']
+    message = ' '.join(args)
+    await context.bot.send_message(chat_id=user_id, text=f"📞 Ответ поддержки: {message}")
+    await update.message.reply_text(f"✅ Ответ отправлен пользователю {user_id}.")
+ 
 # --- АДМИНКА ---
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -191,6 +241,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💰 Выдать звёзды", callback_data="admin_give")],
         [InlineKeyboardButton("📤 Заявки на вывод", callback_data="admin_withdraws")],
         [InlineKeyboardButton("📜 История транзакций", callback_data="admin_history")],
+        [InlineKeyboardButton("📩 Сообщения в поддержку", callback_data="admin_support")],
     ]
     await update.message.reply_text("👑 Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
  
@@ -239,6 +290,20 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "📜 Последние 10 транзакций:\n"
         for uid, typ, amt, date in rows:
             text += f"{date} | {uid} | {typ} | {amt}\n"
+        await query.edit_message_text(text)
+ 
+    elif query.data == "admin_support":
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
+        c.execute('SELECT id, user_id, message, date FROM support WHERE answered = 0 ORDER BY id DESC')
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            await query.edit_message_text("✅ Новых обращений нет.")
+            return
+        text = "📩 Новые сообщения в поддержку:\n"
+        for s_id, uid, msg, date in rows:
+            text += f"ID {s_id} | От {uid} | {date}\n{msg}\n\n"
         await query.edit_message_text(text)
  
 async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -299,15 +364,18 @@ def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("bet", bet))
     app.add_handler(CommandHandler("deposit", deposit))
+    app.add_handler(CommandHandler("addstars", addstars))
     app.add_handler(CommandHandler("withdraw", withdraw))
     app.add_handler(CommandHandler("ref", ref))
     app.add_handler(CommandHandler("top", top))
+    app.add_handler(CommandHandler("support", support))
+    app.add_handler(CommandHandler("reply", reply))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("give", give))
     app.add_handler(CommandHandler("approve", approve))
     app.add_handler(CommandHandler("reject", reject))
-    app.add_handler(CallbackQueryHandler(deposit_callback, pattern="deposit_"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="admin_"))
+    app.add_handler(CallbackQueryHandler(support_answer, pattern="answer_"))
     print("Бот запущен...")
     app.run_polling()
  

@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
  
 TOKEN = "8820171167:AAGiEb-WodNUyhPTMdbdUGnZ2AZcREIwdr8"
-ADMIN_ID = 123456789  # ЗАМЕНИ НА СВОЙ ТЕЛЕГРАМ ID (узнай через @userinfobot)
+ADMIN_ID = 901473279  # ЗАМЕНИ НА СВОЙ ТЕЛЕГРАМ ID (узнай через @userinfobot)
  
 # --- БАЗА ДАННЫХ ---
 def init_db():

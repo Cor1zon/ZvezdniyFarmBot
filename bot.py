@@ -98,6 +98,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "balance":
         user = get_user(user_id)
         await query.edit_message_text(f"💰 Твой баланс: {user['balance']} звёзд.", reply_markup=main_keyboard())
+        return
  
     # --- ПОПОЛНЕНИЕ ---
     elif data == "deposit":
@@ -107,21 +108,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔙 Назад", callback_data="back")],
         ]
         await query.edit_message_text("💳 Выбери сумму:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
  
     elif data.startswith("deposit_"):
         amount = int(data.split('_')[1])
         update_balance(user_id, amount)
         add_transaction(user_id, 'deposit', amount)
         await query.edit_message_text(f"✅ Пополнено {amount} звёзд!", reply_markup=main_keyboard())
+        return
  
     # --- ВЫВОД ---
     elif data == "withdraw":
         await query.edit_message_text("💸 Введи сумму: /withdraw [сумма]", reply_markup=main_keyboard())
+        return
  
     # --- РЕФЕРАЛКА ---
     elif data == "ref":
         link = f"https://t.me/ZvezdniyFarmBot?start={user_id}"
         await query.edit_message_text(f"🔗 Твоя ссылка:\n{link}\n\nЗа друга +10 тебе, +5 ему.", reply_markup=main_keyboard())
+        return
  
     # --- ТОП ---
     elif data == "top":
@@ -134,10 +139,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, (uid, bal) in enumerate(rows, 1):
             text += f"{i}. ID {uid} — {bal}⭐\n"
         await query.edit_message_text(text, reply_markup=main_keyboard())
+        return
  
     # --- ПОДДЕРЖКА ---
     elif data == "support":
         await query.edit_message_text("📞 /support [текст]", reply_markup=main_keyboard())
+        return
  
     # --- АДМИНКА ---
     elif data == "admin":
@@ -152,6 +159,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔙 Назад", callback_data="back")],
         ]
         await query.edit_message_text("👑 Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
  
     elif data.startswith("admin_"):
         if user_id != ADMIN_ID:
@@ -192,29 +200,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for uid, typ, amt, date in rows:
                 text += f"{date} | {uid} | {typ} | {amt}⭐\n"
             await query.edit_message_text(text, reply_markup=main_keyboard())
+        return
  
     # --- НАЗАД ---
     elif data == "back":
         await query.edit_message_text("🌟 Главное меню:", reply_markup=main_keyboard())
+        return
  
-    # === ИГРЫ ===
+    # === ИГРЫ (выбор игры) ===
     elif data.startswith("game_"):
-        game = data.split('_')[1]
-        context.user_data['game'] = game
+        game = data.split('_')[1]  # football, basketball, bowling, darts, classic
+        context.user_data['game'] = game  # Запоминаем игру
         keyboard = [
-            [InlineKeyboardButton("5⭐", callback_data=f"game_bet_5"),
-             InlineKeyboardButton("10⭐", callback_data=f"game_bet_10")],
-            [InlineKeyboardButton("25⭐", callback_data=f"game_bet_25"),
-             InlineKeyboardButton("50⭐", callback_data=f"game_bet_50")],
-            [InlineKeyboardButton("100⭐", callback_data=f"game_bet_100")],
+            [InlineKeyboardButton("5⭐", callback_data="bet_5"),
+             InlineKeyboardButton("10⭐", callback_data="bet_10")],
+            [InlineKeyboardButton("25⭐", callback_data="bet_25"),
+             InlineKeyboardButton("50⭐", callback_data="bet_50")],
+            [InlineKeyboardButton("100⭐", callback_data="bet_100")],
             [InlineKeyboardButton("🔙 Назад", callback_data="back")],
         ]
         emojis = {"football": "⚽", "basketball": "🏀", "bowling": "🎳", "darts": "🎯", "classic": "🎲"}
-        await query.edit_message_text(f"{emojis.get(game, '🎮')} Выбери сумму ставки:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(
+            f"{emojis.get(game, '🎮')} Выбери сумму ставки:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
  
-    elif data.startswith("game_bet_"):
-        amount = int(data.split('_')[2])
-        game = context.user_data.get('game', 'classic')
+    # === ОБРАБОТКА СТАВКИ (bet_5, bet_10, ...) ===
+    elif data.startswith("bet_"):
+        amount = int(data.split('_')[1])
+        game = context.user_data.get('game')  # Достаём игру
+        if not game:
+            await query.edit_message_text("❌ Сначала выбери игру.", reply_markup=main_keyboard())
+            return
+ 
         user = get_user(user_id)
         if user['balance'] < amount:
             await query.edit_message_text("❌ Недостаточно звёзд.", reply_markup=main_keyboard())
@@ -223,7 +242,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- ЛОГИКА ИГР ---
         if game == "football":
             result = random.choice(["гол", "мимо"])
-            guess = random.choice(["гол", "мимо"])  # Игрок не выбирает, просто удача
             if result == "гол":
                 win = amount * 2
                 update_balance(user_id, win)
@@ -248,8 +266,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
  
         elif game == "bowling":
             pins = random.randint(1, 10)
-            win = amount * 2 if pins >= 8 else 0
-            if win:
+            if pins >= 8:
+                win = amount * 2
                 update_balance(user_id, win)
                 add_transaction(user_id, 'game_bowling_win', win)
                 await query.edit_message_text(f"🎳 Сбито {pins} кеглей! +{win}⭐", reply_markup=main_keyboard())
@@ -282,6 +300,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update_balance(user_id, -amount)
                 add_transaction(user_id, 'game_classic_lose', -amount)
                 await query.edit_message_text(f"🎲 Не угадал. Было {result}. -{amount}⭐", reply_markup=main_keyboard())
+        return
  
 # --- ТЕКСТОВЫЕ КОМАНДЫ ---
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
